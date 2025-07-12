@@ -18,6 +18,7 @@ using namespace std::chrono;
 // Global rate limiter data structure with mutex for thread safety
 unordered_map<string, vector<steady_clock::time_point>> ip_requests;
 mutex rate_limiter_mutex;
+mutex console_mutex;
 
 string getClientIP(int client_fd) { 
     struct sockaddr_in client_addr;
@@ -44,29 +45,44 @@ void sendHttpResponse(int client_fd, int status_code, const string& status_text,
 }
 
 void handleClient(int client_fd) {
-    cout << "Client connected, fd: " << client_fd << endl;
+    {
+        lock_guard<mutex> lock(console_mutex);
+        cout << "Client connected, fd: " << client_fd << endl;
+    }
 
     vector<char> buffer(4096, 0);
     int bytes_read = read(client_fd, buffer.data(), buffer.size() - 1);
 
     if (bytes_read <= 0) {
-        cout << "Could not read request or connection closed" << endl;
+        {
+            lock_guard<mutex> lock(console_mutex);
+            cout << "Could not read request or connection closed" << endl;
+        }
         close(client_fd);
         return;
     }
 
     string request(buffer.data(), bytes_read);
-    cout << "Request received:" << endl << request << endl;
+    {
+        lock_guard<mutex> lock(console_mutex);
+        cout << "Request received:" << endl << request << endl;
+    }
     
     istringstream request_stream(request);
     string method, path, version;
     request_stream >> method >> path >> version;
     
     string client_ip = getClientIP(client_fd);
-    cout << "Client IP: " << client_ip << endl;
+    {
+        lock_guard<mutex> lock(console_mutex);
+        cout << "Client IP: " << client_ip << endl;
+    }
     
     if (client_ip == "unknown") {
-        cout << "Could not determine client IP" << endl;
+        {
+            lock_guard<mutex> lock(console_mutex);
+            cout << "Could not determine client IP" << endl;
+        }
         sendHttpResponse(client_fd, 400, "Bad Request", "text/plain", 
                         "Could not determine client IP");
         close(client_fd);
@@ -82,7 +98,10 @@ void handleClient(int client_fd) {
         
         auto& timestamps = ip_requests[client_ip];
         
-        cout << "Timestamps before cleanup: " << timestamps.size() << endl;
+        {
+            lock_guard<mutex> console_lock(console_mutex);
+            cout << "Timestamps before cleanup: " << timestamps.size() << endl;
+        }
         
         // Remove timestamps older than 10 seconds
         timestamps.erase(
@@ -93,21 +112,33 @@ void handleClient(int client_fd) {
             timestamps.end()
         );
         
-        cout << "Timestamps after cleanup: " << timestamps.size() << endl;
+        {
+            lock_guard<mutex> console_lock(console_mutex);
+            cout << "Timestamps after cleanup: " << timestamps.size() << endl;
+        }
         
         // Check if rate limit exceeded
         if (timestamps.size() >= 5) {
-            cout << "Rate limit exceeded for " << client_ip << endl;
+            {
+                lock_guard<mutex> console_lock(console_mutex);
+                cout << "Rate limit exceeded for " << client_ip << endl;
+            }
             sendHttpResponse(client_fd, 429, "Too Many Requests", "text/plain",
                            "Rate limit exceeded. Maximum 5 requests per 10 seconds.");
         } else {
             // Add current timestamp and allow request
             timestamps.push_back(now);
-            cout << "Request allowed for " << client_ip << " (" << timestamps.size() << "/5)" << endl;
+            {
+                lock_guard<mutex> console_lock(console_mutex);
+                cout << "Request allowed for " << client_ip << " (" << timestamps.size() << "/5)" << endl;
+            }
             sendHttpResponse(client_fd, 200, "OK", "text/plain", "Request allowed");
         }
     } else {
-        cout << "Unsupported method or path: " << method << " " << path << endl;
+        {
+            lock_guard<mutex> lock(console_mutex);
+            cout << "Unsupported method or path: " << method << " " << path << endl;
+        }
         sendHttpResponse(client_fd, 404, "Not Found", "text/plain",
                         "Endpoint not found. Use GET /api/check");
     }
