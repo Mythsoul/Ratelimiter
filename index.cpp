@@ -20,10 +20,46 @@ unordered_map<string, vector<steady_clock::time_point>> ip_requests;
 mutex rate_limiter_mutex;
 mutex console_mutex;
 
-string getClientIP(int client_fd) { 
+string getClientIP(int client_fd, const string& headers) {
+    // First try to get IP from headers (for reverse proxy scenarios)
+    size_t pos;
+    
+    pos = headers.find("True-Client-Ip: ");
+    if (pos != string::npos) {
+        size_t start = pos + 16; // Length of "True-Client-Ip: "
+        size_t end = headers.find("\r\n", start);
+        if (end != string::npos) {
+            return headers.substr(start, end - start);
+        }
+    }
+    
+    pos = headers.find("Cf-Connecting-Ip: ");
+    if (pos != string::npos) {
+        size_t start = pos + 18; 
+        size_t end = headers.find("\r\n", start);
+        if (end != string::npos) {
+            return headers.substr(start, end - start);
+        }
+    }
+    
+    pos = headers.find("X-Forwarded-For: ");
+    if (pos != string::npos) {
+        size_t start = pos + 17; 
+        size_t end = headers.find("\r\n", start);
+        if (end != string::npos) {
+            string forwarded_for = headers.substr(start, end - start);
+            size_t comma = forwarded_for.find(",");
+            if (comma != string::npos) {
+                return forwarded_for.substr(0, comma);
+            }
+            return forwarded_for;
+        }
+    }
+    
+    // Fallback to socket peer address
     struct sockaddr_in client_addr;
     socklen_t addr_len = sizeof(client_addr);
-   
+    
     if (getpeername(client_fd, (struct sockaddr*)&client_addr, &addr_len) == 0) { 
         return string(inet_ntoa(client_addr.sin_addr));
     }
@@ -72,7 +108,7 @@ void handleClient(int client_fd) {
     string method, path, version;
     request_stream >> method >> path >> version;
     
-    string client_ip = getClientIP(client_fd);
+    string client_ip = getClientIP(client_fd, request);
     {
         lock_guard<mutex> lock(console_mutex);
         cout << "Client IP: " << client_ip << endl;
