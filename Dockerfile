@@ -13,8 +13,8 @@ WORKDIR /app
 # Copy source code
 COPY index.cpp .
 
-# Compile the C++ application
-RUN g++ -o server index.cpp -std=c++11
+# Compile the C++ application with threading support
+RUN g++ -o server index.cpp -std=c++11 -pthread
 
 # Expose the port that the app runs on
 EXPOSE 10000
