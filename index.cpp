@@ -8,6 +8,7 @@
 #include <chrono>
 #include <arpa/inet.h>
 #include <algorithm>
+#include <cstdlib>
 
 using namespace std;
 using namespace std::chrono;
@@ -54,9 +55,13 @@ int main() {
         return 1;
     }
 
+    // Get port from environment variable (Render sets this)
+    const char* port_env = getenv("PORT");
+    int port = port_env ? atoi(port_env) : 10000;
+    
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY; 
-    address.sin_port = htons(3000);
+    address.sin_port = htons(port);
 
     if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
         perror("Bind failed");
@@ -70,7 +75,7 @@ int main() {
         return 1;
     }
 
-    cout << "Rate Limiter running on port 3000..." << endl;
+    cout << "Rate Limiter running on port " << port << "..." << endl;
     cout << "Rate limit: 5 requests per 10 seconds per IP" << endl;
     cout << "Endpoint: GET /api/check" << endl;
    
