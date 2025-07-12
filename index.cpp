@@ -4,8 +4,24 @@
 #include <string>
 #include <vector>
 #include <sstream>
+#include <unordered_map>
+#include <chrono>
+#include <arpa/inet.h>
+#include <algorithm> 
 
 using namespace std;
+using namespace std::chrono;
+
+string getClientIP(int client_fd) { 
+    struct sockaddr_in client_addr;
+    socklen_t addr_len = sizeof(client_addr);
+    // Get the client's IP address
+    
+    if (getpeername(client_fd, (struct sockaddr*)&client_addr, &addr_len) == 0) { 
+        return string(inet_ntoa(client_addr.sin_addr));
+    }
+    return "unknown";  
+}
 
 int main() {
     int server_fd, client_fd;
@@ -13,15 +29,20 @@ int main() {
     int addlen = sizeof(address);
 
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    
+    int opt = 1;
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
     address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
+    address.sin_addr.s_addr = INADDR_ANY; 
     address.sin_port = htons(3000);
 
     bind(server_fd, (struct sockaddr *)&address, sizeof(address));
     listen(server_fd, 10);
 
-    cout << "Waiting for connections..." << endl;
+    cout << "Rate Limiter running on port 3000..." << endl;
+   
+    unordered_map<string, vector<steady_clock::time_point>> ip_requests;
 
     while (true) {
         client_fd = accept(server_fd, (struct sockaddr *)&address, (socklen_t *)&addlen);
@@ -31,40 +52,54 @@ int main() {
         int bytes_read = read(client_fd, buffer.data(), buffer.size() - 1);
 
         if (bytes_read > 0) {
-            // cout << "Raw Request:\n" << buffer.data() << endl;
-
-            // === Parse the request line ===
             string request(buffer.data());
             cout << "Request:\n" << request << endl;
-            size_t pos = request.find("\r\n");
-            string request_line = request.substr(0, pos);
+  
+            string client_ip = getClientIP(client_fd);
+            cout << "Client IP: " << client_ip << endl;
 
-            cout << "Request Line: " << request_line << endl;
-            istringstream iss(request_line); 
-            string method , path , version ; 
-            iss >> method >> path >> version; 
+            // === Rate limiting logic ===
+            auto now = steady_clock::now(); 
+            auto &timestamps = ip_requests[client_ip];
+            cout << "timestamps" << endl << timestamps.size();
+            // Remove timestamps older than 10 seconds
+            auto it = timestamps.begin();
+            while(it != timestamps.end()) {
+                if(duration_cast<seconds> (now - *it).count()> 10 ){ 
+                    it = timestamps.erase(it);
 
-            cout << "Method: " << method << endl;
-            cout << "Path: " << path << endl;
+                }else{ 
+                    ++it; 
+                }
+            }
+            // Check if client has exceeded rate limit (5 requests per 10 seconds)
+            if (timestamps.size() >= 5) {
+                cout << "Client " << client_ip << " has exceeded the rate limit" << endl;
+                
+                string http_response =
+                    "HTTP/1.1 429 Too Many Requests\r\n"
+                    "Content-Type: text/plain\r\n"
+                    "Content-Length: 28\r\n"
+                    "\r\n"
+                    "Too Many Requests. Slow down!";
 
-            // === Routing ===
-            string response_body;
-
-            if (path == "/") {
-                response_body = "<html><body><h1>Home Page</h1></body></html>";
-            } else if (path == "/about") {
-                response_body = "<html><body><h1>About Page</h1></body></html>";
+                write(client_fd, http_response.c_str(), http_response.size());
             } else {
-                response_body = "<html><body><h1>404 Not Found</h1></body></html>";
+                // Add current timestamp and allow request
+                timestamps.push_back(now);
+                
+                cout << "Request allowed for " << client_ip << " (" << timestamps.size() << "/5)" << endl;
+                
+                string http_response = 
+                    "HTTP/1.1 200 OK\r\n"
+                    "Content-Type: text/plain\r\n"
+                    "Content-Length: 18\r\n"
+                    "\r\n"
+                    "Request Allowed.\n";
+
+                write(client_fd, http_response.c_str(), http_response.size());
             }
 
-            string http_response =
-                "HTTP/1.1 200 OK\r\n"
-                "Content-Type: text/html\r\n"
-                "Content-Length: " + to_string(response_body.size()) + "\r\n"
-                "\r\n" + response_body;
-
-            write(client_fd, http_response.c_str(), http_response.size());
         } else {
             cout << "Could not read the request or request is empty" << endl;
         }
